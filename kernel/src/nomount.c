@@ -893,10 +893,6 @@ void nomount_vfs_inject_dir(struct file *file, struct dir_context *ctx)
     struct nomount_child_name *child;
     struct inode *dir_inode = file_inode(file);
     unsigned long v_index;
-    const char *emit_name = NULL;
-    unsigned long emit_ino = 0;
-    unsigned char emit_type = 0;
-    size_t emit_len = 0;
 
     if (!dir_inode || __nomount_should_skip()) return;
     if (unlikely(nomount_num_dirs() == 0)) return;
@@ -922,20 +918,26 @@ found:
     }
 
     list_for_each_entry_rcu(child, &curr_dir->children_names, list) {
+        char local_name[NAME_MAX];
+        size_t local_len;
+        unsigned long local_ino;
+        unsigned char local_type;
+
         if (child->v_index < v_index) continue;
-
-        emit_name = child->name;
-        emit_len = child->name_len;
-        emit_ino = child->fake_ino;
-        emit_type = child->d_type;
+        local_len = child->name_len;
+        if (local_len >= NAME_MAX) continue;
+        memcpy(local_name, child->name, local_len + 1);
+        local_ino = child->fake_ino;
+        local_type = child->d_type;
         rcu_read_unlock();
-        nm_exit();
 
-        if (!dir_emit(ctx, emit_name, emit_len, emit_ino, emit_type))
+        if (!dir_emit(ctx, local_name, local_len, local_ino, local_type)) {
+            nm_exit();
             return;
+        }
 
         ctx->pos = NOMOUNT_MAGIC_POS + child->v_index + 1;
-        return; 
+        rcu_read_lock(); 
     }
 
     rcu_read_unlock();
