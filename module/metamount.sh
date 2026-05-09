@@ -1,3 +1,5 @@
+#!/system/bin/sh
+
 MODDIR=${0%/*}
 LOADER="$MODDIR/bin/nm"
 MODULES_DIR="/data/adb/modules"
@@ -36,6 +38,7 @@ for mod_path in "$MODULES_DIR"/*; do
         if $VERBOSE; then echo "[SKIP] Module $mod_name is disabled/removed" >> "$LOG_FILE"; fi
         continue
     fi
+
     MODULE_INJECTED="false"
     for partition in $TARGET_PARTITIONS; do
         if [ -d "$mod_path/$partition" ]; then
@@ -44,7 +47,7 @@ for mod_path in "$MODULES_DIR"/*; do
             (
                 cd "$mod_path" || exit
                 if $VERBOSE; then
-                    find "$partition" -type f | while read -r relative_path; do
+                    find -L "$partition" \( -type f -o -type l \) 2>/dev/null | while read -r relative_path; do
                         real_path="$mod_path/$relative_path"
                         virtual_path="/$relative_path"
                         echo "  -> Inject: $virtual_path" >> "$LOG_FILE"
@@ -55,19 +58,24 @@ for mod_path in "$MODULES_DIR"/*; do
                         fi
                     done
                 else
-                    find "$partition" -type f -exec sh -c 'mod=$1; shift; for f; do printf "/%s\0%s/%s\0" "$f" "$mod" "$f"; done' _ "$mod_path" {} + | xargs -0 -r -n 500 "$LOADER" add > /dev/null 2>&1
+                    find -L "$partition" \( -type f -o -type l \) -exec sh -c '
+                        mod="$1"; shift
+                        for f do
+                            printf "/%s\0%s/%s\0" "$f" "$mod" "$f"
+                        done
+                    ' _ "$mod_path" {} + 2>/dev/null | xargs -0 -r -n 500 "$LOADER" add >> "$LOG_FILE" 2>&1
                 fi
             )
         fi
     done
+
     if [ "$MODULE_INJECTED" = "true" ]; then
         ACTIVE_MODULES_COUNT=$((ACTIVE_MODULES_COUNT + 1))
     fi
 done
 
 echo "=== Injection Complete: $(date) ===" >> "$LOG_FILE"
-echo "Current files inyected:" >> "$LOG_FILE"
+echo "Current files injected:" >> "$LOG_FILE"
 "$LOADER" list >> "$LOG_FILE"
 
 sh "$MODDIR/monitor.sh" "$ACTIVE_MODULES_COUNT" &
-

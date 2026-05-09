@@ -363,20 +363,24 @@ async function loadModules() {
 async function loadModule(modId) {
     if (!isValidModId(modId)) return;
     const TARGET_PARTITIONS = ["system", "vendor", "product", "system_ext", "odm", "oem"];
-    const partitionPaths = TARGET_PARTITIONS.map(p => shEscape(`${MOD_DIR}/${modId}/${p}`)).join(' ');
-    const findScript = `find ${partitionPaths} -type f 2>/dev/null`;
+    const modPath = `${MOD_DIR}/${modId}`;
+    const partitionsStr = TARGET_PARTITIONS.join(' ');
+    const loadScript = `
+        cd ${shEscape(modPath)} || exit 0
+        find -L ${partitionsStr} \\( -type f -o -type l \\) -exec sh -c '
+            mod="$1"; shift
+            for f do
+                printf "/%s\\0%s/%s\\0" "$f" "$mod" "$f"
+            done
+        ' _ ${shEscape(modPath)} {} + 2>/dev/null | xargs -0 -r -n 500 ${NM_BIN} add
+    `;
 
-    const res = await exec(findScript);
-    const files = res.stdout.split('\n').filter(f => f.trim() !== '');
-
-    if (files.length === 0) return;
-
-    const batchScript = files.map(file => {
-        const relativePath = file.replace(`${MOD_DIR}/${modId}/`, '');
-        return `${NM_BIN} add ${shEscape("/" + relativePath)} ${shEscape(file)}`;
-    }).join('\n');
-
-    await exec(batchScript);
+    try {
+        await exec(loadScript);
+    } catch (e) {
+        console.error(`Error loading module ${modId}:`, e);
+        throw e;
+    }
 }
 
 async function unloadModule(modId) {
@@ -384,22 +388,21 @@ async function unloadModule(modId) {
     try {
         const res = await exec(`${NM_BIN} list json`);
         const rules = JSON.parse(res.stdout || "[]");
-
         const modulePath = `${MOD_DIR}/${modId}/`;
         const targets = rules
-            .filter(r => r && r.real && r.real.includes(modulePath))
+            .filter(r => r && r.real && r.real.startsWith(modulePath))
             .map(r => r.virtual);
 
         if (targets.length === 0) return;
-
-        const chunkSize = 100;
+        const chunkSize = 500;
         for (let i = 0; i < targets.length; i += chunkSize) {
             const chunk = targets.slice(i, i + chunkSize);
-            const batch = chunk.map(t => `${NM_BIN} del ${shEscape(t)}`).join('\n');
-            await exec(batch);
+            const escapedTargets = chunk.map(t => shEscape(t)).join(' ');
+            const batchScript = `printf "%s\\0" ${escapedTargets} | xargs -0 -r -n 500 ${NM_BIN} del`;
+            await exec(batchScript);
         }
     } catch (e) {
-        console.error("Error in unloadModule:", e);
+        console.error(`Error unloading module ${modId}:`, e);
         throw e;
     }
 }
