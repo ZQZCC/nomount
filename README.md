@@ -1,6 +1,6 @@
 # NoMount
 
-> WARNING: This project is in beta and may contain bugs.
+> WARNING: This project operates directly at the kernel VFS layer and is intended for research and development. Also this project may contain bugs. Proceed with caution.
 
 **NoMount** is a kernel-based file injection and path redirection framework for Android kernels.
 
@@ -8,70 +8,39 @@ Unlike traditional root solutions that rely on `mount --bind` (which pollutes `/
 
 ## Why NoMount?
 
-Traditional methods (such a Magic Mount) modify the mount table. Anti-cheat and banking apps scan `/proc/self/mountinfo` to find these anomalies.
+Traditional methods (such a Magic Mount) modify the mount table. Some detectors and banking apps scan `/proc/self/mountinfo` to find these anomalies.
 
 **NoMount changes the paradigm:**
 
-1. **Zero Mounts:** No `mount()` syscalls are ever used. The mount table remains 100% stock.
-2. **Visual Injection:** Uses advanced `readdir` hooking to make "new" files appear in read-only directories (like `/vendor`) without physically touching the partition.
-3. **Permission Bypass:** Bypasses filesystem permission checks for injected files, preventing crashes without modifying file attributes.
-4. **Linker-Friendly:** Includes "Selective Path Spoofing" to satisfy the Android Linker's namespace isolation (vital for injecting `.so` libraries).
+1. **No Mounts:** No `mount()` syscalls are ever used. The mount table remains 100% stock.
+2. **Visual Injection:** Uses advanced `iterate_dir` hooking to make "new" files appear in read-only directories (like `/vendor`) without physically touching the partition.
+3. **Files Redireccion:** Any file passed through `getname_hook` is intercepted by NoMount, ensuring that any file can be redirected from anywhere.
+4. **Native Permission Delegation:** By seamlessly redirecting the underlying inode without permission hooks, it inherently bypasses restrictions while keeping **SELinux** perfectly intact.
 
 ## Key Features
 
-* **Ghost Redirection:** Redirects a target path (e.g., `/vendor/etc/audio.conf`) to a source file in `/data`. The app reads your file, but believes it's reading the original.
-* **Virtual File Injection:** Inject completely new files into system directories. They appear in `ls`, file managers, and `File.list()` calls thanks to kernel-level directory entry injection.
-* **Security Context Bypass:** Hooks `inode_permission` to grant access to injected files regardless of their actual owner/group in `/data`.
-* **UID Filtering:** Built-in "Invisibility Cloak". You can block specific UIDs (apps) from seeing any injections, effectively isolating them from the modification.
+* **Transparent Path Redirection:** Intercepts a target VFS path (e.g., `/system/app/YouTube/YouTube.apk`) and redirects the file descriptor to a modified file in a different partition (e.g., `/data`). The userspace process is unaware of the redirection.
+* **VFS Directory Injection:** Injects completely new file or directory entries into read-only system paths. Using custom `iterate_dir` kernel hooks, injected files appear natively in standard `readdir` calls, `ls` outputs, and Java `File.list()`.
+* **Security Context Bypass:** `inode_permission` and `generic_permission` hooks ensure that the injected files can be traversed and read, while correctly simulating the typical attributes of system partitions.
+* **UID-Based Rule Isolation:** Utilizes a hash table to filter active rules per process UID. Specific applications can be isolated to see the 100% stock filesystem without any applied injections.
 
-## Architecture
+## Kernel Integration
 
-NoMount moves away from complex metadata spoofing and relies on **surgical VFS hooks**:
-
-1. **`fs/nomount.c`**: The core logic hub. Handles the hash tables, rule resolution, and injection strategies.
-2. **`fs/namei.c`**: Intercepts path lookups. If a rule exists, it quietly switches the path pointer to your custom file.
-3. **`fs/readdir.c`**: The "Visual" engine. It intercepts directory listing calls (`getdents64`), injecting virtual entries into the buffer so apps "see" files that don't exist.
-4. **`fs/d_path.c`**: Performs selective path masking, primarily to allow injected libraries to pass Android's Linker Namespace restrictions.
-
-## Integration & Build
-
-NoMount is designed as a drop-in kernel subsystem.
-
-### 1. Apply the Patch
-
-Apply the provided patch to your kernel source (Compatible with Linux 4.14 ~ 6.x):
-
-```bash
-cd your_kernel_source/
-patch -p1 --fuzz=10 < nomount-kernel-5.4.patch
-
-```
-
-### 2. Configure
-
-Enable the subsystem in your `defconfig` or via `menuconfig`:
-
-```makefile
-CONFIG_NOMOUNT=y
-
-```
-
-### 3. Compile
-
-Build your kernel image as usual. NoMount adds negligible overhead (~1KB binary size).
+Please see [kernel/README.md](kernel/README.md) for detailed kernel-side integration, patch instructions, and atchitecture details.
 
 ## Usage (Userspace)
 
-Control the subsystem using the `nm` binary.
+The subsystem is controlled via the [`nm`](userspace/src/nm.c) binary communicating through a custom IOCTL interface.
 
 | Command | Syntax | Description |
-| --- | --- | --- |
+| :--- | :--- | :--- |
 | **Add Rule** | `nm add <virtual> <real>` | Inject `real` file at `virtual` path. |
 | **Delete Rule** | `nm del <virtual>` | Remove a specific injection rule. |
-| **Add UID Block** | `nm block <uid>` | Hide all injections from this UID. |
-| **Del UID Block** | `nm unblock <uid>` | Allow this UID to see injections again. |
-| **List Rules** | `nm list` | Show injected files |
-| **Clear All** | `nm clear` | Flush all rules and blocks immediately. |
+| **Remove Rule** | `nm rm <virtual>` | Alias for `del`. |
+| **Block UID** | `nm block <uid>` | Isolate UID from seeing any injections. |
+| **Unblock UID** | `nm unblock <uid>` | Restore injection visibility for UID. |
+| **List Rules** | `nm ls [json]` | Show currently active rules (supports standard or `json` output). |
+| **Clear All** | `nm clear` | Flush all rules and UID blocks immediately. |
 | **Version** | `nm ver` | Show the kernel subsystem version. |
 
 ### Examples
@@ -92,6 +61,13 @@ nm add /vendor/etc/audio_effects.conf /data/adb/modules/my_mod/audio_effects.con
 
 ```
 
+**Redirect any file:**
+```bash
+# nm binary recognize relative paths, reconstruct it internally and redirect file correctly
+nm add test temp
+
+```
+
 **Hide root from a banking app:**
 
 ```bash
@@ -106,6 +82,7 @@ nm block 10256
 -  **[A7mdwassa](https://github.com/A7mdwassa)**: Tester and contributor.
 -  **[backslashxx](https://github.com/backslashxx)**: Code optimization.
 -  **[KernelSU](https://github.com/tiann/KernelSU)**: Root solution.
+-  **All testers**: Thanks for making this project more stable!
 
 ## Disclaimer
 

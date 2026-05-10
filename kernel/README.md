@@ -21,14 +21,14 @@ patch -p1 --fuzz=3 < path/to/nomount/kernel/nomount_kernel_integration.patch
 ```
 * Note: The --fuzz=3 parameter here is completely safe and ensures correct integration in 5.4-6.12.
 
- If the patch fails or you prefer to apply the hooks manually, see INTEGRATION.md.
+ If the patch fails or you prefer to apply the hooks manually, see [INTEGRATION.md](INTEGRATION.md).
 
 2. Copy the necessary files:
 
 Transfer the NoMount code (src/) to the fs directory (fs/) of your kernel:
 
 ```bash
-cp path/to/nomount/kernel/src/*<your_kernel_source>/fs
+cp path/to/nomount/kernel/src/* <your_kernel_source>/fs
 ```
 
 3. Configure and compile NoMount:

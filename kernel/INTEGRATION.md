@@ -224,44 +224,7 @@ To be undetectable, the metadata of the files and file systems must match their 
 *   **File Attributes (`fs/stat.c`):**
     *   **Hook:** `vfs_getattr`
     *   **Mechanism:** A *Wrapper* pattern is used. The `nomount_handle_getattr` hook captures the native output of `vfs_getattr_nosec`. If the original read was successful, it overwrites the `inode` and `device id` (dev) in the `kstat` structure before returning it to the user.
-
-*   **Memory Maps (`fs/proc/task_mmu.c`):**
-    *   **Hook:** `show_map_vma`
-    *   **Mechanism:** When a process reads `/proc/self/maps`, the kernel prints the loaded libraries into memory. The `nomount_spoof_mmap_metadata` hook replaces the raw device and inode just before they are printed to the `seq_file`.
-
-*   **Filesystem Attributes (`fs/statfs.c`):**
-    *   **Hook:** `vfs_statfs`
-    *   **Mechanism:** Alter the `kstatfs` structure. If an application requests partition metadata (e.g. to check if the file is on an `ext4` or `erofs` volume), the `nomount_spoof_statfs` hook injects the "Magic Number" (FS type) corresponding to the desired virtual partition.
-*  **Integration:**
-
-#### `fs/proc/task_mmu.c`:
-
-```diff
-diff --git a/fs/proc/task_mmu.c b/fs/proc/task_mmu.c
---- a/fs/proc/task_mmu.c
-+++ b/fs/proc/task_mmu.c
-@@ -xxx,xx +xxx,xx @@ static void show_vma_header_prefix(struct seq_file *m,
- 	seq_putc(m, ' ');
- }
- 
-+#ifdef CONFIG_NOMOUNT
-+extern bool nomount_spoof_mmap_metadata(struct inode *inode, dev_t *dev, unsigned long *ino);
-+#endif
-+
- static void
- show_map_vma(struct seq_file *m, struct vm_area_struct *vma)
- {
-@@ -xxx,xx +xxx,xx @@ show_map_vma(struct seq_file *m, struct vm_area_struct *vma)
- 		struct inode *inode = file_inode(vma->vm_file);
- 		dev = inode->i_sb->s_dev;
- 		ino = inode->i_ino;
-+#ifdef CONFIG_NOMOUNT
-+		nomount_spoof_mmap_metadata(inode, &dev, &ino);
-+#endif
- 		pgoff = ((loff_t)vma->vm_pgoff) << PAGE_SHIFT;
- 	}
-
-```
+	*   **Integration:**
 
 #### `fs/stat.c`
 
@@ -293,6 +256,45 @@ diff --git a/fs/stat.c b/fs/stat.c
  EXPORT_SYMBOL(vfs_getattr);
  
 ```
+
+*   **Memory Maps (`fs/proc/task_mmu.c`):**
+    *   **Hook:** `show_map_vma`
+    *   **Mechanism:** When a process reads `/proc/self/maps`, the kernel prints the loaded libraries into memory. The `nomount_spoof_mmap_metadata` hook replaces the raw device and inode just before they are printed to the `seq_file`.
+	*   **Integration:**
+
+#### `fs/proc/task_mmu.c`:
+
+```diff
+diff --git a/fs/proc/task_mmu.c b/fs/proc/task_mmu.c
+--- a/fs/proc/task_mmu.c
++++ b/fs/proc/task_mmu.c
+@@ -xxx,xx +xxx,xx @@ static void show_vma_header_prefix(struct seq_file *m,
+ 	seq_putc(m, ' ');
+ }
+ 
++#ifdef CONFIG_NOMOUNT
++extern bool nomount_spoof_mmap_metadata(struct inode *inode, dev_t *dev, unsigned long *ino);
++#endif
++
+ static void
+ show_map_vma(struct seq_file *m, struct vm_area_struct *vma)
+ {
+@@ -xxx,xx +xxx,xx @@ show_map_vma(struct seq_file *m, struct vm_area_struct *vma)
+ 		struct inode *inode = file_inode(vma->vm_file);
+ 		dev = inode->i_sb->s_dev;
+ 		ino = inode->i_ino;
++#ifdef CONFIG_NOMOUNT
++		nomount_spoof_mmap_metadata(inode, &dev, &ino);
++#endif
+ 		pgoff = ((loff_t)vma->vm_pgoff) << PAGE_SHIFT;
+ 	}
+
+```
+
+*   **Filesystem Attributes (`fs/statfs.c`):**
+    *   **Hook:** `vfs_statfs`
+    *   **Mechanism:** Alter the `kstatfs` structure. If an application requests partition metadata (e.g. to check if the file is on an `ext4` or `erofs` volume), the `nomount_spoof_statfs` hook injects the "Magic Number" (FS type) corresponding to the desired virtual partition.
+	*  **Integration:**
 
 #### `fs/statfs.c`:
 
