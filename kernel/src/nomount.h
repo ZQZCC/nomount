@@ -20,7 +20,6 @@
 #define NOMOUNT_IOC_ADD_UID     _IOW(NOMOUNT_MAGIC_CODE, 5, unsigned int)
 #define NOMOUNT_IOC_DEL_UID     _IOW(NOMOUNT_MAGIC_CODE, 6, unsigned int)
 #define NOMOUNT_IOC_GET_LIST    _IOR(NOMOUNT_MAGIC_CODE, 7, int)
-#define MAX_LIST_BUFFER_SIZE (1024 * 1024)
 
 static DEFINE_HASHTABLE(nomount_dirs_ht,           NOMOUNT_HASH_BITS);
 static DEFINE_HASHTABLE(nomount_rules_by_vpath,    NOMOUNT_HASH_BITS);
