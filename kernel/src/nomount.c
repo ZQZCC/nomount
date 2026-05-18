@@ -68,6 +68,8 @@ bool nomount_should_skip(void) {
 }
 EXPORT_SYMBOL(nomount_should_skip);
 
+/*** Helpers & Path Resolution ***/
+
 /**
  * __nomount_is_injected_file_rcu - Check if an inode number belongs to an injected file.
  * @ino: The inode number to check
@@ -107,113 +109,6 @@ static inline bool __nomount_is_traversal_allowed_rcu(unsigned long ino) {
         if (dir->dir_ino == ino) return true;
     }
     return false;
-}
-
-/*** Helpers & Path Resolution ***/
-
-/**
- * nomount_drop_vpath_cache - Force VFS to drop dcache for a specific path
- * @path_str: The native absolute path to flush
- * @is_dir: True if we should aggressively invalidate a directory
- */
-static void nomount_drop_vpath_cache(const char *path_str, bool is_dir)
-{
-    struct path path;
-    nm_enter();
-    if (kern_path(path_str, 0, &path) == 0) {
-        if (is_dir) {
-            d_invalidate(path.dentry);
-        } else {
-            d_drop(path.dentry);
-        }
-        path_put(&path);
-    }
-    nm_exit();
-}
-
-/**
- * __nomount_collect_parents - Track parent directories of a real path
- * @real_path: The absolute path of the underlying target file
- *
- * Recursively resolves and registers parent directory inodes to ensure
- * traversal permissions are granted during lookup operations.
- *
- * This function assumes the caller holds the nomount_write_mutex 
- * and is not in a recursive context. 
- */
-static void __nomount_collect_parents(const char *real_path, size_t len)
-{
-    char *path_tmp, *p, *slash;
-    struct path kp;
-    struct nomount_dir_node *dir_node;
-    struct inode *p_inode;
-    unsigned long p_ino;
-    umode_t mode;
-    bool priv;
-
-    if (!real_path) return;
-
-    path_tmp = __getname();
-    if (!path_tmp) return;
-    memcpy(path_tmp, real_path, len + 1);
-
-    p = path_tmp;
-    while (1) {
-        slash = strrchr(p, '/');
-        if (!slash || slash == p)
-            break;
-
-        *slash = '\0';
-
-        nm_enter();
-        if (likely(kern_path(p, LOOKUP_FOLLOW, &kp) == 0)) {
-            p_inode = d_backing_inode(kp.dentry);
-            p_ino = p_inode->i_ino;
-            mode = p_inode->i_mode;
-            priv = ((mode & S_IXOTH) == 0);
-            path_put(&kp);
-            nm_exit();
-
-            {
-                struct nomount_dir_node *curr;
-                bool exists = false;
-                
-                hash_for_each_possible(nomount_dirs_ht, curr, node, p_ino) {
-                    if (curr->dir_ino == p_ino) {
-                        exists = true;
-                        break;
-                    }
-                }
-
-                if (exists)
-                    break;
-
-                dir_node = kmem_cache_alloc(nm_dir_cachep, GFP_KERNEL);
-                if (likely(dir_node)) {
-                    dir_node->dir_ino = p_ino;
-                    dir_node->is_private = priv;
-                    dir_node->next_child_index = 0;
-                    INIT_LIST_HEAD(&dir_node->children_names);
-                    INIT_LIST_HEAD(&dir_node->private_list);
-                    hash_add_rcu(nomount_dirs_ht, &dir_node->node, p_ino);
-                    if (unlikely(priv)) {
-                        dir_node->dir_path_len = (u16)(slash - p);
-                        dir_node->dir_path = kstrdup(p, GFP_KERNEL);
-                        if (likely(dir_node->dir_path)) {
-                            list_add_tail_rcu(&dir_node->private_list, &nomount_private_dirs_list);
-                        }
-                    } else {
-                        dir_node->dir_path = NULL;
-                        dir_node->dir_path_len = 0;
-                    }
-                    atomic_inc(&nm_active_dirs);
-                }
-            }
-        } else {
-            nm_exit();
-        }
-    }
-    __putname(path_tmp);
 }
 
 /**
@@ -262,6 +157,26 @@ static char *nomount_build_path_from_pwd(const char *rel_name, size_t name_len, 
 
     __putname(page_buf);
     return NULL;
+}
+
+/**
+ * nomount_drop_vpath_cache - Force VFS to drop dcache for a specific path
+ * @path_str: The native absolute path to flush
+ * @is_dir: True if we should aggressively invalidate a directory
+ */
+static void nomount_drop_vpath_cache(const char *path_str, bool is_dir)
+{
+    struct path path;
+    nm_enter();
+    if (kern_path(path_str, 0, &path) == 0) {
+        if (is_dir) {
+            d_invalidate(path.dentry);
+        } else {
+            d_drop(path.dentry);
+        }
+        path_put(&path);
+    }
+    nm_exit();
 }
 
 /**
@@ -609,6 +524,92 @@ void nomount_vfs_inject_dir(struct file *file, struct dir_context *ctx)
     up_read(&nomount_dirs_rwsem);
     nm_exit();
 }
+
+/**
+ * __nomount_collect_parents - Track parent directories of a real path
+ * @real_path: The absolute path of the underlying target file
+ *
+ * Recursively resolves and registers parent directory inodes to ensure
+ * traversal permissions are granted during lookup operations.
+ *
+ * This function assumes the caller holds the nomount_write_mutex 
+ * and is not in a recursive context. 
+ */
+static void __nomount_collect_parents(const char *real_path, size_t len)
+{
+    char *path_tmp, *p, *slash;
+    struct path kp;
+    struct nomount_dir_node *dir_node;
+    struct inode *p_inode;
+    unsigned long p_ino;
+    umode_t mode;
+    bool priv;
+
+    if (!real_path) return;
+
+    path_tmp = __getname();
+    if (!path_tmp) return;
+    memcpy(path_tmp, real_path, len + 1);
+
+    p = path_tmp;
+    while (1) {
+        slash = strrchr(p, '/');
+        if (!slash || slash == p)
+            break;
+
+        *slash = '\0';
+
+        nm_enter();
+        if (likely(kern_path(p, LOOKUP_FOLLOW, &kp) == 0)) {
+            p_inode = d_backing_inode(kp.dentry);
+            p_ino = p_inode->i_ino;
+            mode = p_inode->i_mode;
+            priv = ((mode & S_IXOTH) == 0);
+            path_put(&kp);
+            nm_exit();
+
+            {
+                struct nomount_dir_node *curr;
+                bool exists = false;
+                
+                hash_for_each_possible(nomount_dirs_ht, curr, node, p_ino) {
+                    if (curr->dir_ino == p_ino) {
+                        exists = true;
+                        break;
+                    }
+                }
+
+                if (exists)
+                    break;
+
+                dir_node = kmem_cache_alloc(nm_dir_cachep, GFP_KERNEL);
+                if (likely(dir_node)) {
+                    dir_node->dir_ino = p_ino;
+                    dir_node->is_private = priv;
+                    dir_node->next_child_index = 0;
+                    INIT_LIST_HEAD(&dir_node->children_names);
+                    INIT_LIST_HEAD(&dir_node->private_list);
+                    hash_add_rcu(nomount_dirs_ht, &dir_node->node, p_ino);
+                    if (unlikely(priv)) {
+                        dir_node->dir_path_len = (u16)(slash - p);
+                        dir_node->dir_path = kstrdup(p, GFP_KERNEL);
+                        if (likely(dir_node->dir_path)) {
+                            list_add_tail_rcu(&dir_node->private_list, &nomount_private_dirs_list);
+                        }
+                    } else {
+                        dir_node->dir_path = NULL;
+                        dir_node->dir_path_len = 0;
+                    }
+                    atomic_inc(&nm_active_dirs);
+                }
+            }
+        } else {
+            nm_exit();
+        }
+    }
+    __putname(path_tmp);
+}
+
 
 /**
  * __nomount_auto_inject_parent - Create a fake directory entry node
