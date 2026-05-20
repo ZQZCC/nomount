@@ -45,11 +45,11 @@ diff --git a/fs/Makefile b/fs/Makefile
 ---
 
 ## 2. Path Lookup, Access Control, and Permissions.
-*   **Files:** `fs/namei.c`
-*   **Hooks:** `getname_flags`, `generic_permission` and `inode_permission`
-*   **Purpose:** Intercept text strings (paths) that come from the Userspace before the kernel converts them into physical structures (`dentry`/`inode`). And also ensure that the injected files can be traversed and read, while correctly simulating the typical attributes of system partitions.
+*    **Files:** `fs/namei.c`
+*    **Hooks:** `getname_flags`, `getname_kernel`, `generic_permission` and `inode_permission`
+*    **Purpose:** Intercept text strings (paths) originating from both Userspace and Kernelspace before the VFS converts them into physical structures (`dentry`/`inode`). Additionally, ensure that injected files can be traversed and read while correctly simulating the typical attributes of system partitions.
 *   **Mechanism:**
-    *   In `namei.c`, the `nomount_getname_hook` hook is executed immediately after copying the path from the user. If the path matches an active rule, the original string is replaced with the actual path of the redirected file. The rest of the kernel processes the call without knowing that it was tricked.
+    *   In `namei.c`, `nomount_getname_hook` is executed immediately after the path string is allocated in the kernel. `getname_flags` intercepts standard application traffic, while `getname_kernel` catches internal system requests (e.g., `request_firmware`). If the path matches an active rule, the original string is replaced with the actual path of the redirected file. The rest of the kernel processes the call without knowing that it was tricked.
     *   In `namei.c`, the `nomount_allow_access` hook forces a return of `0` (Success) to prevent native DAC/MAC checks (like SELinux) from blocking access to our injected folders.
 *   **Integration:**
 
@@ -83,6 +83,18 @@ diff --git a/fs/namei.c b/fs/namei.c
  	audit_getname(result);
  	return result;
  }
+@@ -xxx,xx +xxx,xx @@ getname_kernel(const char * filename)
+ 	result->uptr = NULL;
+ 	result->aname = NULL;
+ 	result->refcnt = 1;
++#ifdef CONFIG_NOMOUNT
++	if (!IS_ERR(result)) {
++		result = nomount_getname_hook(result);
++	}
++#endif
+ 	audit_getname(result);
+ 
+ 	return result;
 @@ -xxx,xx +xxx,xx @@ int generic_permission(struct inode *inode, int mask)
  {
  	int ret;
