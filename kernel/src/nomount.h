@@ -9,53 +9,55 @@
 #include <net/sock.h>
 #include <net/genetlink.h>
 #include <linux/version.h>
+#include <linux/jump_label.h>
 
 #define NOMOUNT_VERSION    2
 #define NOMOUNT_HASH_BITS  12
 #define NM_CHILD_HASH_BITS   6
 #define NOMOUNT_UID_HASH_BITS 4
-#define NM_FLAG_IS_DIR        (1 << 7)
+#define NM_FLAG_IS_DIR (1 << 1)
 
 static DEFINE_HASHTABLE(nomount_dirs_ht,           NOMOUNT_HASH_BITS);
 static DEFINE_HASHTABLE(nomount_rules_by_vpath,    NOMOUNT_HASH_BITS);
 static DEFINE_HASHTABLE(nomount_rules_by_real_ino, NOMOUNT_HASH_BITS);
 static DEFINE_HASHTABLE(nomount_rules_by_v_ino,    NOMOUNT_HASH_BITS);
 static DEFINE_HASHTABLE(nomount_basenames_ht,      NOMOUNT_HASH_BITS);
+static DEFINE_HASHTABLE(nomount_private_dirs_ht,   NOMOUNT_HASH_BITS);
 static DEFINE_HASHTABLE(nomount_uid_ht,            NOMOUNT_UID_HASH_BITS);
 static LIST_HEAD(nomount_rules_list);
-static LIST_HEAD(nomount_private_dirs_list);
 static DEFINE_MUTEX(nomount_write_mutex);
 static DECLARE_RWSEM(nomount_dirs_rwsem);
 
-
 struct nomount_rule {
+    struct list_head list;
     struct hlist_node v_ino_node;
     struct hlist_node real_ino_node;
     struct hlist_node vpath_node;
     struct hlist_node basename_node;
-    struct list_head list;
     char *virtual_path;
     char *real_path;
     const char *basename;
     unsigned long v_ino;
     unsigned long real_ino;
-    long v_fs_type;
+    u32 v_fs_type;
+    u32 v_hash;
+    u32 b_hash;
     dev_t v_dev;
     dev_t real_dev;
-    u32 v_hash;
-    u32 flags;
     u16 vp_len;
     u16 rp_len;
     u16 b_len;
+    u8  flags;
 };
 
 struct nomount_dir_node {
-    struct hlist_node node;      
-    struct list_head private_list;
+    struct hlist_node node;
+    struct hlist_node private_hash_node;
     struct list_head children_names; 
     DECLARE_HASHTABLE(children_ht, NM_CHILD_HASH_BITS);
     char *dir_path;              
     unsigned long dir_ino;
+    u32 dir_hash;
     u32 next_child_index;
     u16 dir_path_len;
     bool is_private;
@@ -121,5 +123,8 @@ enum {
 #define NM_OPS_POLICY(p)
 #define NM_FAMILY_POLICY(p) .policy = (p),
 #endif
+
+/* Application UID start */
+#define AID_APP_START 10000
 
 #endif /* _LINUX_NOMOUNT_H */
