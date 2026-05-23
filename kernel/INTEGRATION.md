@@ -64,8 +64,8 @@ diff --git a/fs/namei.c b/fs/namei.c
  #define EMBEDDED_NAME_MAX	(PATH_MAX - offsetof(struct filename, iname))
  
 +#ifdef CONFIG_NOMOUNT
-+extern struct filename *nomount_getname_hook(struct filename *name);
-+extern int nomount_allow_access(struct inode *inode, int mask);
++extern struct filename *nomount_handle_getname(struct filename *name);
++extern int nomount_handle_permission(struct inode *inode, int mask);
 +#endif
 +
  struct filename *
@@ -77,7 +77,7 @@ diff --git a/fs/namei.c b/fs/namei.c
  	result->aname = NULL;
 +#ifdef CONFIG_NOMOUNT
 +	if (!IS_ERR(result)) {
-+		result = nomount_getname_hook(result);
++		result = nomount_handle_getname(result);
 +	}
 +#endif
  	audit_getname(result);
@@ -89,7 +89,7 @@ diff --git a/fs/namei.c b/fs/namei.c
  	result->refcnt = 1;
 +#ifdef CONFIG_NOMOUNT
 +	if (!IS_ERR(result)) {
-+		result = nomount_getname_hook(result);
++		result = nomount_handle_getname(result);
 +	}
 +#endif
  	audit_getname(result);
@@ -100,7 +100,7 @@ diff --git a/fs/namei.c b/fs/namei.c
  	int ret;
  
 +#ifdef CONFIG_NOMOUNT
-+	int nm_perm = nomount_allow_access(inode, mask);
++	int nm_perm = nomount_handle_permission(inode, mask);
 +	if (unlikely(nm_perm < 0)) return nm_perm;
 +	if (unlikely(nm_perm > 0)) return 0;
 +#endif
@@ -113,7 +113,7 @@ diff --git a/fs/namei.c b/fs/namei.c
  	int retval;
  
 +#ifdef CONFIG_NOMOUNT
-+	int nm_perm = nomount_allow_access(inode, mask);
++	int nm_perm = nomount_handle_permission(inode, mask);
 +	if (unlikely(nm_perm < 0)) return nm_perm;
 +	if (unlikely(nm_perm > 0)) return 0;
 +#endif
@@ -167,9 +167,9 @@ diff --git a/fs/d_path.c b/fs/d_path.c
 
 ## 4. Directory Listing
 *   **File:** `fs/readdir.c`
-*   **Hooks:** `iterate_dir` (via the `nomount_handle_iterate_dir` macro)
+*   **Hooks:** `iterate_dir`
 *   **Purpose:** Allow commands like `ls` or listing APIs to seamlessly see virtual files injected into legitimate system directories.
-*   **Mechanism:** Instead of manually manipulating userspace buffers in the `getdents` syscalls, NoMount now hooks directly into the directory iteration engine (`iterate_dir`). The wrapper macro acts as a smart proxy: it first allows the native filesystem to read the physical disk without interference. By tracking the directory offset (`ctx->pos`), NoMount detects when the native iteration reaches the End of File (EOF) or pauses. Once the physical files are fully processed, it calls `nomount_vfs_inject_dir` to seamlessly inject virtual entries using the kernel's native `dir_emit()` function.
+*   **Mechanism:** Instead of manually manipulating userspace buffers in the `getdents` syscalls, NoMount now hooks directly into the directory iteration engine (`iterate_dir`). The wrapper acts as a smart proxy: it first allows the native filesystem to read the physical disk without interference. By tracking the directory offset (`ctx->pos`), NoMount detects when the native iteration reaches the End of File (EOF) or pauses. Once the physical files are fully processed, it seamlessly inject virtual entries using the kernel's native `dir_emit()` function.
 *   **Integration:**
 
 #### `fs/readdir.c`:
@@ -183,30 +183,7 @@ diff --git a/fs/readdir.c b/fs/readdir.c
  } while (0)
  
 +#ifdef CONFIG_NOMOUNT
-+extern void nomount_vfs_inject_dir(struct file *file, struct dir_context *ctx);
-+extern bool nomount_should_skip(void);
-+extern const loff_t nomount_magic_pos;
-+
-+#define nomount_handle_iterate_dir(file, ctx, shared, res)               \
-+do {                                                                     \
-+    loff_t _old_pos = (ctx)->pos;                                        \
-+    bool _nm_skip = nomount_should_skip();                               \
-+                                                                         \
-+    if ((ctx)->pos >= nomount_magic_pos && !_nm_skip) {                  \
-+        (res) = 0;                                                       \
-+    } else {                                                             \
-+        if (shared)                                                      \
-+            (res) = (file)->f_op->iterate_shared((file), (ctx));         \
-+        else                                                             \
-+            (res) = (file)->f_op->iterate((file), (ctx));                \
-+    }                                                                    \
-+                                                                         \
-+    if ((res) >= 0 && !_nm_skip) {                                       \
-+        if ((ctx)->pos == _old_pos || (ctx)->pos >= nomount_magic_pos) { \
-+            nomount_vfs_inject_dir((file), (ctx));                       \
-+        }                                                                \
-+    }                                                                    \
-+} while (0)
++extern int nomount_handle_iterate_dir(struct file *file, struct dir_context *ctx);
 +#endif
  
  int iterate_dir(struct file *file, struct dir_context *ctx)
@@ -216,7 +193,7 @@ diff --git a/fs/readdir.c b/fs/readdir.c
  	if (!IS_DEADDIR(inode)) {
  		ctx->pos = file->f_pos;
 +#ifdef CONFIG_NOMOUNT
-+		nomount_handle_iterate_dir(file, ctx, shared, res);
++		res = nomount_handle_iterate_dir(file, ctx);
 +#else
  		if (shared)
  			res = file->f_op->iterate_shared(file, ctx);

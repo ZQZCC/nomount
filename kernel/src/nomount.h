@@ -36,11 +36,13 @@ struct nomount_rule {
     const char *basename;
     unsigned long v_ino;
     unsigned long real_ino;
+    unsigned long parent_ino;
     u32 v_fs_type;
     u32 v_hash;
     u32 b_hash;
     dev_t v_dev;
     dev_t real_dev;
+    dev_t parent_dev;
     u16 vp_len;
     u16 rp_len;
     u16 b_len;
@@ -67,6 +69,7 @@ struct nomount_dir_node {
     struct nm_child_array __rcu *child_array; 
     char *dir_path;
     unsigned long dir_ino;
+    dev_t dir_dev;
     u16 dir_path_len;
     bool is_private;
 };
