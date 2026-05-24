@@ -51,26 +51,11 @@ const viewLoadState = {
 
 // ── Helpers ──────────
 function isValidUid(uid) { return /^\d+$/.test(String(uid)); }
-function shEscape(str) { return "'" + String(str).replace(/'/g, "'\\''") + "'"; }
 
 function isValidModId(modId) {
     const s = String(modId);
     if (s.includes('..')) return false;
     return /^[a-zA-Z0-9._-]+$/.test(s);
-}
-
-function escapeHTML(str) {
-    if (typeof str !== 'string') return str;
-    return str.replace(/[&<>"']/g, function(m) {
-        switch (m) {
-            case '&': return '&amp;';
-            case '<': return '&lt;';
-            case '>': return '&gt;';
-            case '"': return '&quot;';
-            case "'": return '&#39;';
-            default: return m;
-        }
-    });
 }
 
 // ── Navegation ──────────
@@ -159,15 +144,19 @@ async function loadHome() {
 
             try {
                 const rules = JSON.parse(jsonRaw);
-                const uniqueMods = new Set();
+                const modCounts = {};
                 rules.forEach(r => {
-                    if (r.real.includes(MOD_DIR)) {
+                    if (r && r.real && r.real.startsWith(MOD_DIR)) {
                         const rParts = r.real.split('/');
                         const modName = rParts[4];
-                        if (modName && modName !== 'nomount') uniqueMods.add(modName);
+                        
+                        if (modName && modName !== 'nomount') {
+                            modCounts[modName] = (modCounts[modName] || 0) + 1;
+                        }
                     }
                 });
-                activeModulesCount = uniqueMods.size;
+                
+                activeModulesCount = Object.keys(modCounts).length;
                 dVer = parts[5]; 
             } catch (e) {
                 console.error("Error parsing rules in Home:", e);
@@ -258,13 +247,24 @@ async function loadModules() {
             return;
         }
 
+        const ruleCountByMod = {};
+        activeRules.forEach(r => {
+            if (!r || !r.real) return;
+            const parts = r.real.split('/');
+            if (parts.length > 4 && parts[3] === 'modules') {
+                const modName = parts[4];
+                if (modName && modName !== 'nomount') {
+                    ruleCountByMod[modName] = (ruleCountByMod[modName] || 0) + 1;
+                }
+            }
+        });
+
         const entries = lines.map(line => {
             const [modId, realName, disableStr, skipStr] = line.split('|');
             const hasDisable = disableStr === 'true';
             const hasSkipMount = skipStr === 'true';
-
-            const moduleRules = activeRules.filter(r => r && r.real && r.real.includes(`${MOD_DIR}/${modId}/`));
-            const isLoaded = moduleRules.length > 0;
+            const fileCount = ruleCountByMod[modId] || 0;
+            const isLoaded = fileCount > 0;
 
             let status = "Inactive";
             if (isLoaded) {
@@ -280,76 +280,77 @@ async function loadModules() {
                 hasSkipMount,
                 isLoaded,
                 status,
-                fileCount: moduleRules.length,
+                fileCount,
             }];
         });
-
         const processEntries = () => {
             if (renderId !== currentRenderId) return;
             const chunk = entries.splice(0, 3);
-            
-            chunk.forEach(([modId, data]) => {
-                const card = document.createElement('div');
-                card.className = 'card module-card';
-                card.dataset.moduleId = modId;
-                card.innerHTML = `
-                    <div class="module-header">
-                        <div class="module-info">
-                            <h3>${escapeHTML(data.realName)}</h3>
-                            <p>${escapeHTML(modId)} • ${escapeHTML(data.status)}</p>
-                        </div>
-                        <md-switch id="switch-${escapeHTML(modId)}" ${!data.hasDisable ? 'selected' : ''}></md-switch>
-                    </div>
-                    <div class="module-divider"></div>
-                    <div class="module-extension">
-                        <div class="file-count">
-                            <md-icon style="font-size:16px;">description</md-icon>
-                            <span>${data.fileCount} files injected</span>
-                        </div>
-                        <button class="btn-hot-action ${data.isLoaded ? 'unload' : ''}" id="btn-hot-${escapeHTML(modId)}">
-                            ${data.isLoaded ? 'Hot Unload' : 'Hot Load'}
-                        </button>
-                    </div>
-                `;
 
-                const toggle = card.querySelector('md-switch');
-                toggle.addEventListener('change', async () => {
-                    if (!isValidModId(modId)) return;
-                    const targetState = toggle.selected;
-                    toggle.disabled = true;
-                    try {
-                        if (targetState) {
-                            await exec(`rm ${shEscape(`${MOD_DIR}/${modId}/disable`)}`);
-                            await loadModule(modId);
-                        } else {
-                            await unloadModule(modId);
-                            await exec(`touch ${shEscape(`${MOD_DIR}/${modId}/disable`)}`);
+            requestAnimationFrame(() => {
+                chunk.forEach(([modId, data]) => {
+                    const card = document.createElement('div');
+                    card.className = 'card module-card';
+                    card.dataset.moduleId = modId;
+                    card.innerHTML = `
+                        <div class="module-header">
+                            <div class="module-info">
+                                <h3>${data.realName}</h3>
+                                <p>${modId} • ${data.status}</p>
+                            </div>
+                            <md-switch id="switch-${modId}" ${!data.hasDisable ? 'selected' : ''}></md-switch>
+                        </div>
+                        <div class="module-divider"></div>
+                        <div class="module-extension">
+                            <div class="file-count">
+                                <md-icon style="font-size:16px;">description</md-icon>
+                                <span>${data.fileCount} files injected</span>
+                            </div>
+                            <button class="btn-hot-action ${data.isLoaded ? 'unload' : ''}" id="btn-hot-${modId}">
+                                ${data.isLoaded ? 'Hot Unload' : 'Hot Load'}
+                            </button>
+                        </div>
+                    `;
+
+                    const toggle = card.querySelector('md-switch');
+                    toggle.addEventListener('change', async () => {
+                        if (!isValidModId(modId)) return;
+                        const targetState = toggle.selected;
+                        toggle.disabled = true;
+                        try {
+                            if (targetState) {
+                                await exec(`rm ${MOD_DIR}/${modId}/disable`);
+                                await loadModule(modId);
+                            } else {
+                                await unloadModule(modId);
+                                await exec(`touch ${MOD_DIR}/${modId}/disable`);
+                            }
+                        } finally {
+                            loadModules();
                         }
-                    } finally {
-                        loadModules();
-                    }
+                    });
+
+                    const hotBtn = card.querySelector('.btn-hot-action');
+                    hotBtn.addEventListener('click', async () => {
+                        if (!isValidModId(modId)) return;
+                        hotBtn.disabled = true;
+                        try {
+                            if (data.isLoaded) await unloadModule(modId);
+                            else await loadModule(modId);
+                        } finally {
+                            loadModules();
+                        }
+                    });
+
+                    listContainer.appendChild(card);
                 });
 
-                const hotBtn = card.querySelector('.btn-hot-action');
-                hotBtn.addEventListener('click', async () => {
-                    if (!isValidModId(modId)) return;
-                    hotBtn.disabled = true;
-                    try {
-                        if (data.isLoaded) await unloadModule(modId);
-                        else await loadModule(modId);
-                    } finally {
-                        loadModules();
-                    }
-                });
-
-                listContainer.appendChild(card);
+                if (entries.length > 0) {
+                    setTimeout(processEntries, 8);
+                } else {
+                    emptyBanner?.classList.toggle('active', listContainer.children.length === 0);
+                }
             });
-
-            if (entries.length > 0) {
-                setTimeout(processEntries, 16);
-            } else {
-                emptyBanner?.classList.toggle('active', listContainer.children.length === 0);
-            }
         };
 
         processEntries();
@@ -366,13 +367,13 @@ async function loadModule(modId) {
     const modPath = `${MOD_DIR}/${modId}`;
     const partitionsStr = TARGET_PARTITIONS.join(' ');
     const loadScript = `
-        cd ${shEscape(modPath)} || exit 0
+        cd ${modPath} || exit 0
         find -L ${partitionsStr} \\( -type f -o -type l \\) -exec sh -c '
             mod="$1"; shift
             for f do
                 printf "/%s\\0%s/%s\\0" "$f" "$mod" "$f"
             done
-        ' _ ${shEscape(modPath)} {} + 2>/dev/null | xargs -0 -r -n 500 ${NM_BIN} add
+        ' _ ${modPath} {} + 2>/dev/null | xargs -0 -r -n 500 ${NM_BIN} add
     `;
 
     try {
@@ -397,7 +398,7 @@ async function unloadModule(modId) {
         const chunkSize = 500;
         for (let i = 0; i < targets.length; i += chunkSize) {
             const chunk = targets.slice(i, i + chunkSize);
-            const escapedTargets = chunk.map(t => shEscape(t)).join(' ');
+            const escapedTargets = chunk.map(t => t).join(' ');
             const batchScript = `printf "%s\\0" ${escapedTargets} | xargs -0 -r -n 500 ${NM_BIN} del`;
             await exec(batchScript);
         }
@@ -410,36 +411,46 @@ async function unloadModule(modId) {
 // ── APPS & EXCLUSIONS ──────────
 let allAppsCache = [];
 let showSystemApps = false;
+let appLoadingPromise = null;
 
 async function ensureAppsCache() {
     if (allAppsCache.length > 0) return;
+    if (appLoadingPromise) return appLoadingPromise;
 
-    try {
-        const pkgsRaw = ksu.listPackages("all");
-        const pkgs = JSON.parse(pkgsRaw);
-        const chunkSize = 200;
-        let allInfo = [];
-        for (let i = 0; i < pkgs.length; i += chunkSize) {
-            const chunk = pkgs.slice(i, i + chunkSize);
-            const infoRaw = ksu.getPackagesInfo(JSON.stringify(chunk));
-            allInfo = allInfo.concat(JSON.parse(infoRaw));
+    appLoadingPromise = (async () => {
+        try {
+            const pkgs = JSON.parse(ksu.listPackages("all"));
+            const chunkSize = 200;
+            let allInfo = [];
+            
+            for (let i = 0; i < pkgs.length; i += chunkSize) {
+                const chunk = pkgs.slice(i, i + chunkSize);
+                const infoRaw = ksu.getPackagesInfo(JSON.stringify(chunk));
+                allInfo = allInfo.concat(JSON.parse(infoRaw));
+                await new Promise(r => setTimeout(r, 5));
+            }
+            
+            allAppsCache = allInfo.map(app => {
+                const label = app.appLabel || app.packageName;
+                return {
+                    packageName: app.packageName,
+                    appLabel: label,
+                    uid: String(app.uid),
+                    isSystem: app.isSystem,
+                    _searchLabel: label.toLowerCase(),
+                    _searchPackage: app.packageName.toLowerCase()
+                };
+            }).sort((a, b) => a.appLabel.localeCompare(b.appLabel));
+            
+        } catch (e) {
+            console.error("Error loading applist:", e);
+            throw e;
+        } finally {
+            appLoadingPromise = null;
         }
-        allAppsCache = allInfo.map(app => {
-            const label = app.appLabel || app.packageName;
-            return {
-                packageName: app.packageName,
-                appLabel: label,
-                uid: String(app.uid),
-                isSystem: app.isSystem,
-                _searchLabel: label.toLowerCase(),
-                _searchPackage: app.packageName.toLowerCase()
-            };
-        });
-        allAppsCache.sort((a, b) => a.appLabel.localeCompare(b.appLabel));
-    } catch (e) {
-        console.error("Error loading applist:", e);
-        showToast("Error loading applist");
-    }
+    })();
+
+    return appLoadingPromise;
 }
 
 // Virtualized App List State
@@ -486,8 +497,8 @@ async function loadExclusions() {
                             <img src="ksu://icon/${pkg}" style="width: 40px; height: 40px; border-radius: 10px;" 
                                 onerror="this.src='data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iIzgwODA4MCI+PHBhdGggZD0iTTEyIDJDNi40OCAyIDIgNi40OCAyIDEyczQuNDggMTAgMTAgMTAgMTAtNC40OCAxMC0xMFMxNy41MiAyIDEyIDJ6bTAgMThjLTQuNDEgMC04LTMuNTktOC04czMuNTktOCA4LTggOCAzLjU5IDggOC0zLjU5IDgtOCA4eiIvPjwvc3ZnPg=='" />
                             <div class="setting-text">
-                                <h3 style="margin:0; font-size:16px;">${escapeHTML(label)}</h3>
-                                <p style="margin:0; opacity:0.7; font-size:14px;">${escapeHTML(pkg)}</p>
+                                <h3 style="margin:0; font-size:16px;">${label}</h3>
+                                <p style="margin:0; opacity:0.7; font-size:14px;">${pkg}</p>
                             </div>
                         </div>
                         <md-icon-button class="btn-delete"><md-icon>delete</md-icon></md-icon-button>
@@ -616,8 +627,8 @@ function renderNextAppBatch() {
         item.innerHTML = `
             <img src="${iconSrc}" class="app-icon-img" style="width: 40px; height: 40px; border-radius: 10px;" loading="lazy" onerror="this.src='${fallback}'" /> 
             <div class="app-details" style="flex:1;">
-                <div class="app-name" style="font-weight:bold; font-size:16px;">${escapeHTML(app.appLabel)}</div>
-                <div class="app-pkg" style="font-size:12px; opacity:0.7;">${escapeHTML(app.packageName)}</div>
+                <div class="app-name" style="font-weight:bold; font-size:16px;">${app.appLabel}</div>
+                <div class="app-pkg" style="font-size:12px; opacity:0.7;">${app.packageName}</div>
             </div>
             <div style="text-align:right;">
                 <div style="font-size: 12px; color: var(--md-sys-color-primary);">UID: ${app.uid}</div>
@@ -651,7 +662,7 @@ async function removeExclusion(uid, name) {
                                 .map(l => l.trim())
                                 .filter(l => l !== '' && l !== String(uid) && isValidUid(l));
         const newContent = lines.join('\n');
-        await exec(`echo ${shEscape(newContent)} > ${FILES.exclusions}`);
+        await exec(`echo ${newContent} > ${FILES.exclusions}`);
 
         await exec(`${NM_BIN} unblock ${uid}`);
         await loadExclusions();
