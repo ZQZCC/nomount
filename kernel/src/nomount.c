@@ -4,7 +4,7 @@
 #include <linux/cred.h>
 #include <linux/statfs.h>
 #include <linux/fs_struct.h>
-#include <asm/unaligned.h>
+#include <linux/version.h>
 #include "nomount.h"
 
 static struct kmem_cache *nm_rule_cachep, *nm_dir_cachep, *nm_uid_cachep;
@@ -28,7 +28,7 @@ DEFINE_STATIC_KEY_FALSE(nomount_active_dirs);
  *
  * Returns true if the UID exists in the exclusion hash table.
  */
-bool nomount_is_uid_blocked(uid_t uid) {
+static inline bool nomount_is_uid_blocked(uid_t uid) {
     struct nomount_uid_node *entry;
     rcu_read_lock();
     hash_for_each_possible_rcu(nomount_uid_ht, entry, node, uid) {
@@ -172,7 +172,7 @@ static void nomount_drop_vpath_cache(const char *path_str, bool is_dir)
  * NOTE: The caller MUST hold rcu_read_lock() before calling this function
  * and keep it held as long as the returned rule is being used.
  */
-struct nomount_rule *nomount_get_rule_by_inode(struct inode *inode) {
+static inline struct nomount_rule *nomount_get_rule_by_inode(struct inode *inode) {
     struct nomount_rule *rule;
     hash_for_each_possible_rcu(nomount_rules_by_real_ino, rule, real_ino_node, inode->i_ino) {
         if (rule->real_ino == inode->i_ino && rule->real_dev == inode->i_sb->s_dev) return rule;
@@ -194,7 +194,7 @@ struct nomount_rule *nomount_get_rule_by_inode(struct inode *inode) {
  * NOTE: The caller MUST hold rcu_read_lock() before calling this function
  * and keep it held as long as the returned rule is being used.
  */
-struct nomount_rule *nomount_get_rule_by_path(const char *pathname, size_t len) {
+static inline struct nomount_rule *nomount_get_rule_by_path(const char *pathname, size_t len) {
     struct nomount_rule *rule;
     u32 hash = full_name_hash(NULL, pathname, len);
     hash_for_each_possible_rcu(nomount_rules_by_vpath, rule, vpath_node, hash) {
@@ -381,16 +381,20 @@ int nomount_handle_iterate_dir(struct file *file, struct dir_context *ctx)
     if (!static_branch_unlikely(&nomount_active_dirs) || __nomount_should_skip()) {
         if (file->f_op->iterate_shared)
             return file->f_op->iterate_shared(file, ctx);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
         else if (file->f_op->iterate)
             return file->f_op->iterate(file, ctx);
+#endif
         return -ENOTDIR;
     }
 
     if (ctx->pos < nomount_magic_pos) {
         if (file->f_op->iterate_shared)
             res = file->f_op->iterate_shared(file, ctx);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
         else if (file->f_op->iterate)
-            res = file->f_op->iterate(file, ctx);
+            return file->f_op->iterate(file, ctx);
+#endif
         else
             return -ENOTDIR;
     }
@@ -547,7 +551,7 @@ bool nomount_spoof_mmap_metadata(struct inode *inode, dev_t *dev, unsigned long 
  *
  * Return a pointer to the nomount_dir_node on success, NULL on failure (ENOMEM).
  */
-static struct nomount_dir_node* __nomount_get_or_create_dir(unsigned long ino, dev_t dev)
+static inline struct nomount_dir_node* __nomount_get_or_create_dir(unsigned long ino, dev_t dev)
 {
     struct nomount_dir_node *dir_node, *curr;
 

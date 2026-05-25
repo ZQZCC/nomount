@@ -8,6 +8,11 @@
 #include <net/sock.h>
 #include <net/genetlink.h>
 #include <linux/version.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0)
+#include <linux/unaligned.h>
+#else
+#include <asm/unaligned.h>
+#endif
 #include <linux/jump_label.h>
 
 #define NOMOUNT_VERSION    2
@@ -78,6 +83,15 @@ struct nomount_uid_node {
     struct hlist_node node;
     uid_t uid;
 };
+
+/* VFS Hook Prototypes */
+char *nomount_handle_dpath(const struct path *path, char *buf, int buflen);
+int nomount_handle_permission(struct inode *inode, int mask);
+struct filename *nomount_handle_getname(struct filename *name);
+int nomount_handle_iterate_dir(struct file *file, struct dir_context *ctx);
+int nomount_handle_getattr(int ret, const struct path *path, struct kstat *stat);
+void nomount_spoof_statfs(const struct path *path, struct kstatfs *buf);
+bool nomount_spoof_mmap_metadata(struct inode *inode, dev_t *dev, unsigned long *ino);
 
 /* ========================================================================= */
 /* NETLINK GENERIC PROTOCOL DEFINITIONS */
