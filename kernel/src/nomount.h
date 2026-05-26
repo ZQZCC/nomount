@@ -15,7 +15,7 @@
 #endif
 #include <linux/jump_label.h>
 
-#define NOMOUNT_VERSION    2
+#define NOMOUNT_VERSION    10
 #define NOMOUNT_HASH_BITS  12
 #define NOMOUNT_UID_HASH_BITS 4
 #define NM_FLAG_IS_DIR (1 << 1)
