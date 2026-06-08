@@ -1,37 +1,27 @@
-// ── KernelSU exec wrapper ──────────
+// KernelSU exec wrapper
 let _cbId = 0;
 function exec(cmd) {
-  return new Promise((resolve) => {
-    const key = `_ksu_cb_${Date.now()}_${_cbId++}`;
-    window[key] = (errno, stdout, stderr) => {
-      delete window[key];
-      resolve({ errno, stdout: stdout || '', stderr: stderr || '' });
-    };
-    if (typeof ksu !== 'undefined' && ksu.exec) {
-      ksu.exec(cmd, '{}', key);
-    } else {
-      resolve({ errno: 1, stdout: '', stderr: 'ksu not defined' });
-    }
-  });
+    return new Promise((resolve) => {
+        const key = `_ksu_cb_${Date.now()}_${_cbId++}`;
+        window[key] = (errno, stdout, stderr) => {
+            delete window[key];
+            resolve({ errno, stdout: stdout || '', stderr: stderr || '' });
+        };
+        if (typeof ksu !== 'undefined' && ksu.exec) {
+            ksu.exec(cmd, '{}', key);
+        } else {
+            resolve({ errno: 1, stdout: '', stderr: 'ksu not defined' });
+        }
+    });
 }
 
 function showToast(msg) {
-  if (typeof ksu !== 'undefined' && ksu.toast) { 
-      ksu.toast(msg); 
-      return; 
-  }
-  console.log(`[TOAST]: ${msg}`);
-  // Fallback
-  const el = document.getElementById('toast');
-  if (el) {
-      el.textContent = msg;
-      el.classList.add('show');
-      clearTimeout(el._t);
-      el._t = setTimeout(() => el.classList.remove('show'), 2800);
-  }
+    if (typeof ksu !== 'undefined' && ksu.toast) {
+        ksu.toast(msg);
+    }
 }
 
-// ── Variables ──────────
+// Variables
 const ADB_DIR = "/data/adb";
 const MOD_DIR = `${ADB_DIR}/modules`;
 const NM_DATA = `${ADB_DIR}/nomount`;
@@ -49,7 +39,7 @@ const viewLoadState = {
     'view-options': false,
 };
 
-// ── Helpers ──────────
+// Helpers
 function isValidUid(uid) { return /^\d+$/.test(String(uid)); }
 
 function isValidModId(modId) {
@@ -58,7 +48,66 @@ function isValidModId(modId) {
     return /^[a-zA-Z0-9._-]+$/.test(s);
 }
 
-// ── Navegation ──────────
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function syncSystemBarTheme() {
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (!meta) return;
+
+    const styles = getComputedStyle(document.documentElement);
+    const surface = styles.getPropertyValue('--md-sys-color-background').trim()
+        || styles.getPropertyValue('--md-sys-color-surface').trim();
+
+    if (surface) meta.setAttribute('content', surface);
+}
+
+function getHomeElements() {
+    return {
+        stats: document.getElementById('injection-stats'),
+        kernel: document.getElementById('kernel-version'),
+        device: document.getElementById('device-model'),
+        android: document.getElementById('android-ver'),
+        statusTitle: document.getElementById('status-title'),
+        statusLabel: document.getElementById('status-indicator'),
+        statusCard: document.querySelector('.home-status-card'),
+        statusIcon: document.getElementById('status-icon'),
+    };
+}
+
+function applyHomeData(data, statsText) {
+    const elements = getHomeElements();
+    if (elements.kernel) elements.kernel.textContent = data.kernelVer || "Unknown";
+    if (elements.device) elements.device.textContent = data.deviceModel || "Unknown";
+    if (elements.android) elements.android.textContent = data.androidInfo || "Unknown";
+    if (elements.statusLabel) elements.statusLabel.textContent = data.versionFull || "Unknown";
+    if (statsText && elements.stats) elements.stats.textContent = statsText;
+
+    if (data.active) {
+        setActiveUI(elements.statusTitle, elements.statusLabel, elements.statusCard, elements.statusIcon);
+    } else {
+        setInactiveUI(elements.statusTitle, elements.statusLabel, elements.statusCard, elements.statusIcon);
+    }
+}
+
+const systemThemeQuery = window.matchMedia?.('(prefers-color-scheme: dark)');
+if (systemThemeQuery?.addEventListener) {
+    systemThemeQuery.addEventListener('change', () => requestAnimationFrame(syncSystemBarTheme));
+} else {
+    systemThemeQuery?.addListener?.(() => requestAnimationFrame(syncSystemBarTheme));
+}
+
+// Navigation
 function initNavigation() {
     const navItems = document.querySelectorAll('.nav-item');
     const views = document.querySelectorAll('.view-content');
@@ -94,31 +143,12 @@ function initNavigation() {
     });
 }
 
-// ── HOME ──────────
+// Home
 async function loadHome() {
-    const statsDisplay = document.getElementById('injection-stats');
-    const kernelDisplay = document.getElementById('kernel-version');
-    const deviceDisplay = document.getElementById('device-model');
-    const androidDisplay = document.getElementById('android-ver');
-    const versionDisplay = document.getElementById('nomount-version');
-    const indicator = document.getElementById('status-indicator');
-    const indicator_box = document.querySelector('.card.status-card-compact');
-    const indicator_icon = document.querySelector('.status-icon-box');
-
     const cache = localStorage.getItem('nm_home_cache');
     if (cache) {
         try {
-            const data = JSON.parse(cache);
-            kernelDisplay.textContent = data.kernelVer;
-            deviceDisplay.textContent = data.deviceModel;
-            androidDisplay.textContent = data.androidInfo;
-            versionDisplay.textContent = data.versionFull;
-            if (data.active) {
-                indicator.textContent = "Active";
-                indicator.style.color = "var(--md-sys-color-primary)";
-            } else {
-                setInactiveUI(indicator, indicator_box, indicator_icon);
-            }
+            applyHomeData(JSON.parse(cache));
         } catch (e) {}
     }
 
@@ -165,28 +195,17 @@ async function loadHome() {
             const [kVer, model, aRel, aSdk, mVer] = parts;
             const androidInfo = `Android ${aRel} (API ${aSdk})`;
             const versionFull = `${mVer} (${dVer})`;
+            const homeData = {
+                kernelVer: kVer,
+                deviceModel: model,
+                androidInfo: androidInfo,
+                versionFull: versionFull,
+                active: dVer && dVer !== "Unknown"
+            };
 
             requestAnimationFrame(() => {
-                kernelDisplay.textContent = kVer || "Unknown";
-                deviceDisplay.textContent = model || "Unknown";
-                androidDisplay.textContent = androidInfo;
-                versionDisplay.textContent = versionFull;
-                statsDisplay.textContent = `${activeModulesCount} modules injecting`;
-
-                if (dVer && dVer !== "Unknown") {
-                    indicator.textContent = "Active";
-                    indicator.style.color = "var(--md-sys-color-primary)";
-                } else {
-                    setInactiveUI(indicator, indicator_box, indicator_icon);
-                }
-
-                localStorage.setItem('nm_home_cache', JSON.stringify({
-                    kernelVer: kVer,
-                    deviceModel: model,
-                    androidInfo: androidInfo,
-                    versionFull: versionFull,
-                    active: dVer && dVer !== "Unknown"
-                }));
+                applyHomeData(homeData, `${activeModulesCount} modules injecting`);
+                localStorage.setItem('nm_home_cache', JSON.stringify(homeData));
             });
         } catch (e) {
             console.error("Delayed Home update error:", e);
@@ -194,20 +213,29 @@ async function loadHome() {
     })();
 }
 
-function setInactiveUI(indicator, box, icon) {
-    indicator.textContent = "Inactive";
-    indicator.style.color = "var(--md-sys-color-on-error)";
-    if(box) box.style.backgroundColor = "var(--md-sys-color-error-container)";
-    if(icon) {
-        icon.style.backgroundColor = "var(--md-sys-color-error)";
-        icon.innerHTML = `
-            <svg xmlns="http://www.w3.org/2000/svg" height="32" viewBox="0 -960 960 960" width="32" fill="var(--md-sys-color-on-error)">
-                <path d="M480-280q17 0 28.5-11.5T520-320q0-17-11.5-28.5T480-360q-17 0-28.5 11.5T440-320q0 17 11.5 28.5T480-280Zm-40-160h80v-240h-80v240Zm40 360q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Z"/>
-            </svg>`;
+function setActiveUI(title, label, box, icon) {
+    if (title) title.textContent = "Active";
+    label?.classList.add('active');
+    label?.classList.remove('inactive');
+    box?.classList.add('active');
+    box?.classList.remove('inactive');
+    icon?.classList.remove('inactive');
+    icon?.replaceChildren(document.createTextNode('check_circle'));
+}
+
+function setInactiveUI(title, label, box, icon) {
+    if (title) title.textContent = "Inactive";
+    label?.classList.add('inactive');
+    label?.classList.remove('active');
+    box?.classList.remove('active');
+    box?.classList.add('inactive');
+    if (icon) {
+        icon.classList.add('inactive');
+        icon.replaceChildren(document.createTextNode('error'));
     }
 }
 
-// ── MODULES ──────────
+// Modules
 let currentRenderId = 0;
 async function loadModules() {
     const listContainer = document.getElementById('modules-list');
@@ -243,7 +271,7 @@ async function loadModules() {
         listContainer.innerHTML = ''; 
 
         if (lines.length === 0) {
-            if(emptyBanner) emptyBanner.classList.add('active');
+            if (emptyBanner) emptyBanner.classList.add('active');
             return;
         }
 
@@ -292,22 +320,22 @@ async function loadModules() {
                     const card = document.createElement('div');
                     card.className = 'card module-card';
                     card.dataset.moduleId = modId;
+                    const actionLabel = data.isLoaded ? 'hot unload' : 'hot load';
                     card.innerHTML = `
                         <div class="module-header">
                             <div class="module-info">
-                                <h3>${data.realName}</h3>
-                                <p>${modId} • ${data.status}</p>
+                                <h3>${escapeHtml(data.realName)}</h3>
+                                <p>Status: ${escapeHtml(data.status)}</p>
+                                <div class="file-count">
+                                    <span>Injected: ${data.fileCount} files</span>
+                                </div>
                             </div>
-                            <md-switch id="switch-${modId}" ${!data.hasDisable ? 'selected' : ''}></md-switch>
+                            <md-switch id="switch-${modId}" aria-label="Toggle module" ${!data.hasDisable ? 'selected' : ''}></md-switch>
                         </div>
                         <div class="module-divider"></div>
                         <div class="module-extension">
-                            <div class="file-count">
-                                <md-icon style="font-size:16px;">description</md-icon>
-                                <span>${data.fileCount} files injected</span>
-                            </div>
                             <button class="btn-hot-action ${data.isLoaded ? 'unload' : ''}" id="btn-hot-${modId}">
-                                ${data.isLoaded ? 'Hot Unload' : 'Hot Load'}
+                                <span>${actionLabel}</span>
                             </button>
                         </div>
                     `;
@@ -315,8 +343,11 @@ async function loadModules() {
                     const toggle = card.querySelector('md-switch');
                     toggle.addEventListener('change', async () => {
                         if (!isValidModId(modId)) return;
+                        if (toggle.dataset.busy === 'true') return;
                         const targetState = toggle.selected;
-                        toggle.disabled = true;
+                        const motionDone = delay(320);
+                        toggle.dataset.busy = 'true';
+                        toggle.classList.add('switch-busy');
                         try {
                             if (targetState) {
                                 await exec(`rm ${MOD_DIR}/${modId}/disable`);
@@ -326,6 +357,9 @@ async function loadModules() {
                                 await exec(`touch ${MOD_DIR}/${modId}/disable`);
                             }
                         } finally {
+                            await motionDone;
+                            toggle.classList.remove('switch-busy');
+                            delete toggle.dataset.busy;
                             loadModules();
                         }
                     });
@@ -357,7 +391,7 @@ async function loadModules() {
 
     } catch (e) {
         console.error("Error loading modules:", e);
-        listContainer.innerHTML = `<div style="padding:20px; color:var(--md-sys-color-error);">Error loading modules: ${e.message}</div>`;
+        listContainer.innerHTML = `<div class="error-message">Error loading modules: ${e.message}</div>`;
     }
 }
 
@@ -408,7 +442,7 @@ async function unloadModule(modId) {
     }
 }
 
-// ── APPS & EXCLUSIONS ──────────
+// Apps and exclusions
 let allAppsCache = [];
 let showSystemApps = false;
 let appLoadingPromise = null;
@@ -493,12 +527,12 @@ async function loadExclusions() {
                     item.dataset.uid = uid;
                     
                     item.innerHTML = `
-                        <div style="display:flex; align-items:center; gap:16px;">
-                            <img src="ksu://icon/${pkg}" style="width: 40px; height: 40px; border-radius: 10px;" 
+                        <div class="exclusion-app">
+                            <img src="ksu://icon/${pkg}" class="app-icon-img"
                                 onerror="this.src='data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iIzgwODA4MCI+PHBhdGggZD0iTTEyIDJDNi40OCAyIDIgNi40OCAyIDEyczQuNDggMTAgMTAgMTAgMTAtNC40OCAxMC0xMFMxNy41MiAyIDEyIDJ6bTAgMThjLTQuNDEgMC04LTMuNTktOC04czMuNTktOCA4LTggOCAzLjU5IDggOC0zLjU5IDgtOCA4eiIvPjwvc3ZnPg=='" />
                             <div class="setting-text">
-                                <h3 style="margin:0; font-size:16px;">${label}</h3>
-                                <p style="margin:0; opacity:0.7; font-size:14px;">${pkg}</p>
+                                <h3>${label}</h3>
+                                <p>${pkg}</p>
                             </div>
                         </div>
                         <md-icon-button class="btn-delete"><md-icon>delete</md-icon></md-icon-button>
@@ -511,11 +545,11 @@ async function loadExclusions() {
 
             requestAnimationFrame(() => {
                 const placeholder = listContainer.querySelector('.empty-list-placeholder');
-                if(placeholder) placeholder.remove();
+                if (placeholder) placeholder.remove();
                 listContainer.appendChild(fragment);
                 
                 if (blockedUids.size === 0) {
-                    listContainer.innerHTML = '<div style="padding:20px; opacity:0.5; text-align:center;" class="empty-list-placeholder">No exclusions yet</div>';
+                    listContainer.innerHTML = '<div class="empty-list-placeholder">No exclusions yet</div>';
                 }
             });
 
@@ -538,7 +572,7 @@ async function openAppSelector() {
     filterMenu.classList.remove('active'); 
     searchInput.value = '';
     
-    if(sysSwitch) sysSwitch.checked = showSystemApps;
+    if (sysSwitch) sysSwitch.selected = showSystemApps;
 
     const closeModal = () => {
         modal.classList.remove('active');
@@ -547,7 +581,7 @@ async function openAppSelector() {
     };
     closeModalBtn.addEventListener('click', closeModal);
 
-    container.innerHTML = '<div class="loading-spinner" style="padding:20px; text-align:center;">Loading apps...</div>';
+    container.innerHTML = '<div class="loading-spinner">Loading apps...</div>';
     
     listObserver = new IntersectionObserver((entries) => {
         if (entries[0].isIntersecting) {
@@ -573,7 +607,7 @@ async function openAppSelector() {
         };
 
     } catch (e) {
-        container.innerHTML = `<div style="padding:20px; color:var(--md-sys-color-error);">Error: ${e.message}</div>`;
+        container.innerHTML = `<div class="error-message">Error: ${e.message}</div>`;
         console.error(e);
     }
 }
@@ -614,25 +648,20 @@ function renderNextAppBatch() {
 
     batch.forEach(app => {
         const item = document.createElement('div');
-        item.className = 'app-item card';
-        item.style.display = 'flex';
-        item.style.alignItems = 'center';
-        item.style.padding = '12px';
-        item.style.gap = '16px';
-        item.style.cursor = 'pointer';
+        item.className = 'app-item segment-card';
         
         const iconSrc = `ksu://icon/${app.packageName}`;
         const fallback = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iIzgwODA4MCI+PHBhdGggZD0iTTEyIDJDNi40OCAyIDIgNi40OCAyIDEyczQuNDggMTAgMTAgMTAgMTAtNC40OCAxMC0xMFMxNy41MiAyIDEyIDJ6bTAgMThjLTQuNDEgMC04LTMuNTktOC04czMuNTktOCA4LTggOCAzLjU5IDggOC0zLjU5IDgtOCA4eiIvPjwvc3ZnPg==";
 
         item.innerHTML = `
-            <img src="${iconSrc}" class="app-icon-img" style="width: 40px; height: 40px; border-radius: 10px;" loading="lazy" onerror="this.src='${fallback}'" /> 
-            <div class="app-details" style="flex:1;">
-                <div class="app-name" style="font-weight:bold; font-size:16px;">${app.appLabel}</div>
-                <div class="app-pkg" style="font-size:12px; opacity:0.7;">${app.packageName}</div>
+            <img src="${iconSrc}" class="app-icon-img" loading="lazy" onerror="this.src='${fallback}'" />
+            <div class="app-details">
+                <div class="app-name">${app.appLabel}</div>
+                <div class="app-pkg">${app.packageName}</div>
             </div>
-            <div style="text-align:right;">
-                <div style="font-size: 12px; color: var(--md-sys-color-primary);">UID: ${app.uid}</div>
-                ${app.isSystem ? '<span style="font-size:10px; background:#333; padding:2px 4px; border-radius:4px; opacity:0.7;">SYS</span>' : ''}
+            <div class="app-meta">
+                <div class="uid-label">UID: ${app.uid}</div>
+                ${app.isSystem ? '<span class="system-chip">SYS</span>' : ''}
             </div>
         `;
 
@@ -682,8 +711,7 @@ async function addExclusion(uid, name) {
     } catch (e) { showToast("Error blocking"); }
 }
 
-// ── OPTIONS ──────────
-// ── OPTIONS ──────────
+// Options
 async function loadOptions() {
     const swVerbose = document.getElementById('setting-verbose');
     const swSafe = document.getElementById('setting-safemode');
@@ -691,22 +719,22 @@ async function loadOptions() {
     const v = await exec(`[ -f ${FILES.verbose} ] && echo yes`);
     const s = await exec(`[ -f ${FILES.disable} ] && echo yes`);
 
-    if(swVerbose) swVerbose.selected = v.stdout.includes('yes');
-    if(swSafe) swSafe.selected = s.stdout.includes('yes');
+    if (swVerbose) swVerbose.selected = v.stdout.includes('yes');
+    if (swSafe) swSafe.selected = s.stdout.includes('yes');
 
-    if(swVerbose) {
+    if (swVerbose) {
         swVerbose.addEventListener('change', (e) => {
             exec(e.target.selected ? `touch ${FILES.verbose}` : `rm ${FILES.verbose}`);
         });
     }
 
-    if(swSafe) {
+    if (swSafe) {
         swSafe.addEventListener('change', (e) => {
             exec(e.target.selected ? `touch ${FILES.disable}` : `rm ${FILES.disable}`);
         });
     }
 
-    if(btnClear) {
+    if (btnClear) {
         btnClear.onclick = () => {
             showToast("Clearing all rules...");
             (async () => {
@@ -723,12 +751,12 @@ async function loadOptions() {
     }
 }
 
-// ── PULL TO REFRESH ──────────
+// Pull to refresh
 let isGlobalLoading = false;
 function initPullToRefresh() {
     const container = document.querySelector('.page-container');
     const indicator = document.querySelector('.pull-to-refresh-indicator');
-    if(!container || !indicator) return;
+    if (!container || !indicator) return;
     
     const indicatorIcon = indicator.querySelector('.icon');
 
@@ -762,7 +790,7 @@ function initPullToRefresh() {
             
             indicator.style.top = `${Math.min(pullDistance, pullThreshold) - 60}px`;
             indicator.style.opacity = opacity;
-            if(indicatorIcon) indicatorIcon.style.transform = `rotate(${rotation}deg)`;
+            if (indicatorIcon) indicatorIcon.style.transform = `rotate(${rotation}deg)`;
         }
     }, { passive: false });
 
@@ -795,7 +823,7 @@ function initPullToRefresh() {
         indicator.classList.remove('refreshing');
         indicator.style.top = '-60px';
         indicator.style.opacity = '0';
-        setTimeout(() => { if(indicatorIcon) indicatorIcon.style.transform = 'rotate(0deg)'; }, 300);
+        setTimeout(() => { if (indicatorIcon) indicatorIcon.style.transform = 'rotate(0deg)'; }, 300);
     }
 }
 
@@ -811,33 +839,19 @@ async function refreshCurrentView() {
     }
 }
 
-// ── INIT ──────────
+// Init
 document.addEventListener('DOMContentLoaded', () => {
+    syncSystemBarTheme();
     initNavigation();
     initPullToRefresh();
     
     const fab = document.getElementById('fab-add-exclusion');
-    if(fab) fab.addEventListener('click', openAppSelector);
+    if (fab) fab.addEventListener('click', openAppSelector);
 
     const cache = localStorage.getItem('nm_home_cache');
     if (cache) {
         try {
-            const data = JSON.parse(cache);
-            document.getElementById('device-model').textContent = data.deviceModel;
-            document.getElementById('kernel-version').textContent = data.kernelVer;
-            document.getElementById('android-ver').textContent = data.androidInfo;
-            document.getElementById('nomount-version').textContent = data.versionFull;
-            
-            const indicator = document.getElementById('status-indicator');
-            if (data.active) {
-                indicator.textContent = "Active";
-                indicator.style.color = "var(--md-sys-color-primary)";
-            } else {
-                setInactiveUI(indicator, 
-                    document.querySelector('.card.status-card-compact'), 
-                    document.querySelector('.status-icon-box')
-                );
-            }
+            applyHomeData(JSON.parse(cache));
         } catch (e) {
             console.error("Error parsing Home cache", e);
         }
@@ -846,7 +860,6 @@ document.addEventListener('DOMContentLoaded', () => {
     viewLoadState['view-home'] = true;
     loadHome(); 
 
-    // Pre-cache
     (async () => {
         try {
             await ensureAppsCache();
