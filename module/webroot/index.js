@@ -112,6 +112,20 @@ const viewLoadState = {
 // Helpers
 function isValidUid(uid) { return /^\d+$/.test(String(uid)); }
 
+function parseUidList(text) {
+    const uids = String(text || '')
+        .split('\n')
+        .map(line => line.trim())
+        .filter(isValidUid);
+    return [...new Set(uids)];
+}
+
+function buildWriteUidListCommand(uids) {
+    const safeUids = [...new Set(uids.map(String).filter(isValidUid))];
+    if (safeUids.length === 0) return `: > ${FILES.exclusions}`;
+    return `printf '%s\\n' ${safeUids.join(' ')} > ${FILES.exclusions}`;
+}
+
 function isValidModId(modId) {
     const s = String(modId);
     if (s.includes('..')) return false;
@@ -170,6 +184,65 @@ function applyHomeData(data, statsText) {
     }
 }
 
+function getActiveView() {
+    return document.querySelector('.view-content.active');
+}
+
+function isCollapsibleTopBarView(view = getActiveView()) {
+    return view && (view.id === 'view-modules' || view.id === 'view-exclusions');
+}
+
+function clamp(value, min = 0, max = 1) {
+    return Math.min(max, Math.max(min, value));
+}
+
+function updateTopAppBar() {
+    const container = document.querySelector('.page-container');
+    const topBar = document.getElementById('top-app-bar');
+    const topBarTitle = document.getElementById('top-app-bar-title');
+    const activeView = getActiveView();
+    if (!container || !topBar || !topBarTitle) return;
+
+    if (!isCollapsibleTopBarView(activeView)) {
+        topBarTitle.textContent = '';
+        topBar.style.setProperty('--top-app-bar-opacity', '0');
+        topBar.style.setProperty('--top-app-title-opacity', '0');
+        topBar.classList.remove('visible');
+        topBar.classList.remove('show-title');
+        topBar.setAttribute('aria-hidden', 'true');
+        return;
+    }
+
+    const scrollTop = container.scrollTop;
+    const title = activeView.querySelector('.header-title')?.textContent?.trim() || '';
+    const shouldShow = scrollTop > 0.5;
+    const titleOpacity = clamp((scrollTop - 18) / 24);
+    const shouldShowTitle = titleOpacity > 0;
+
+    topBarTitle.textContent = title;
+    topBar.style.setProperty('--top-app-bar-opacity', shouldShow ? '1' : '0');
+    topBar.style.setProperty('--top-app-title-opacity', titleOpacity.toFixed(3));
+    topBar.classList.toggle('visible', shouldShow);
+    topBar.classList.toggle('show-title', shouldShowTitle);
+    topBar.setAttribute('aria-hidden', titleOpacity > 0.5 ? 'false' : 'true');
+}
+
+function initTopAppBar() {
+    const container = document.querySelector('.page-container');
+    if (!container) return;
+
+    let rafId = 0;
+    container.addEventListener('scroll', () => {
+        if (rafId) cancelAnimationFrame(rafId);
+        rafId = requestAnimationFrame(() => {
+            rafId = 0;
+            updateTopAppBar();
+        });
+    }, { passive: true });
+
+    updateTopAppBar();
+}
+
 const systemThemeQuery = window.matchMedia?.('(prefers-color-scheme: dark)');
 if (systemThemeQuery?.addEventListener) {
     systemThemeQuery.addEventListener('change', () => requestAnimationFrame(syncSystemBarTheme));
@@ -194,6 +267,7 @@ function initNavigation() {
                 view.classList.remove('active');
             });
             document.getElementById(targetId).classList.add('active');
+            updateTopAppBar();
 
             if (targetId === 'view-exclusions') {
                 fabContainer.classList.add('visible');
@@ -578,70 +652,61 @@ let filterTimeout;
 
 async function loadExclusions() {
     const listContainer = document.getElementById('exclusions-list');
+    if (!listContainer) return;
 
-    (async () => {
-        try {
+    try {
+        const cat = await exec(`cat ${FILES.exclusions} 2>/dev/null || echo ""`);
+        const blockedUids = parseUidList(cat.stdout);
+
+        if (blockedUids.length > 0) {
+            await ensureAppsCache();
+        }
+
+        const appsMap = new Map(allAppsCache.map(app => [String(app.uid), app]));
+        const fragment = document.createDocumentFragment();
+
+        blockedUids.forEach(uid => {
+            const app = appsMap.get(uid);
+            const label = app ? (app.appLabel || app.packageName) : `UID: ${uid}`;
+            const pkg = app ? app.packageName : 'System/Unknown';
+
+            const item = document.createElement('div');
+            item.className = 'card setting-item';
+            item.dataset.uid = uid;
+
+            item.innerHTML = `
+                <div class="exclusion-app">
+                    <img src="ksu://icon/${escapeHtml(pkg)}" class="app-icon-img"
+                        onerror="this.src='data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iIzgwODA4MCI+PHBhdGggZD0iTTEyIDJDNi40OCAyIDIgNi40OCAyIDEyczQuNDggMTAgMTAgMTAgMTAtNC40OCAxMC0xMFMxNy41MiAyIDEyIDJ6bTAgMThjLTQuNDEgMC04LTMuNTktOC04czMuNTktOCA4LTggOCAzLjU5IDggOC0zLjU5IDgtOCA4eiIvPjwvc3ZnPg=='" />
+                    <div class="setting-text">
+                        <h3>${escapeHtml(label)}</h3>
+                        <p>${escapeHtml(pkg)}</p>
+                    </div>
+                </div>
+                <md-icon-button class="btn-delete" aria-label="Remove exclusion"><md-icon>delete</md-icon></md-icon-button>
+            `;
+
+            item.querySelector('.btn-delete').onclick = () => removeExclusion(uid, label);
+            fragment.appendChild(item);
+        });
+
+        requestAnimationFrame(() => {
             listContainer.innerHTML = '';
-            const cat = await exec(`cat ${FILES.exclusions} 2>/dev/null || echo ""`);
-            const blockedUids = new Set(cat.stdout.split('\n').filter(u => u.trim() !== ''));
+            listContainer.appendChild(fragment);
 
-            if (blockedUids.size > 0) {
-                await ensureAppsCache();
+            if (blockedUids.length === 0) {
+                listContainer.innerHTML = `
+                    <div class="empty-list-placeholder empty-state">
+                        <div class="empty-face">(｡•̀ᴗ-)✧</div>
+                        <div class="empty-text">No exclusions yet</div>
+                    </div>
+                `;
             }
-
-            const appsMap = new Map(allAppsCache.map(app => [String(app.uid), app]));
-            const currentItems = Array.from(listContainer.querySelectorAll('.setting-item'));
-            const existingUids = new Set(currentItems.map(i => i.dataset.uid));
-
-            currentItems.forEach(item => {
-                if (!blockedUids.has(item.dataset.uid)) item.remove();
-            });
-
-            const fragment = document.createDocumentFragment();
-            blockedUids.forEach(uid => {
-                if (!existingUids.has(uid)) {
-                    const app = appsMap.get(uid);
-                    const label = app ? (app.appLabel || app.packageName) : `UID: ${uid}`;
-                    const pkg = app ? app.packageName : 'System/Unknown';
-                    
-                    const item = document.createElement('div');
-                    item.className = 'card setting-item';
-                    item.dataset.uid = uid;
-                    
-                    item.innerHTML = `
-                        <div class="exclusion-app">
-                            <img src="ksu://icon/${pkg}" class="app-icon-img"
-                                onerror="this.src='data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iIzgwODA4MCI+PHBhdGggZD0iTTEyIDJDNi40OCAyIDIgNi40OCAyIDEyczQuNDggMTAgMTAgMTAgMTAtNC40OCAxMC0xMFMxNy41MiAyIDEyIDJ6bTAgMThjLTQuNDEgMC04LTMuNTktOC04czMuNTktOCA4LTggOCAzLjU5IDggOC0zLjU5IDgtOCA4eiIvPjwvc3ZnPg=='" />
-                            <div class="setting-text">
-                                <h3>${label}</h3>
-                                <p>${pkg}</p>
-                            </div>
-                        </div>
-                        <md-icon-button class="btn-delete"><md-icon>delete</md-icon></md-icon-button>
-                    `;
-                    
-                    item.querySelector('.btn-delete').onclick = () => removeExclusion(uid, label);
-                    fragment.appendChild(item);
-                }
-            });
-
-            requestAnimationFrame(() => {
-                const placeholder = listContainer.querySelector('.empty-list-placeholder');
-                if (placeholder) placeholder.remove();
-                listContainer.appendChild(fragment);
-                
-                if (blockedUids.size === 0) {
-                    listContainer.innerHTML = `
-                        <div class="empty-list-placeholder empty-state">
-                            <div class="empty-face">(｡•̀ᴗ-)✧</div>
-                            <div class="empty-text">No exclusions yet</div>
-                        </div>
-                    `;
-                }
-            });
-
-        } catch (e) { console.error(e); }
-    })();
+        });
+    } catch (e) {
+        console.error(e);
+        showToast("Error loading exclusions");
+    }
 }
 
 async function openAppSelector() {
@@ -773,14 +838,15 @@ async function removeExclusion(uid, name) {
     if (!isValidUid(uid)) return showToast("Invalid UID");
     showToast(`Unblocking ${name}...`);
     try {
-        const cat = await exec(`cat ${FILES.exclusions}`);
-        const lines = cat.stdout.split('\n')
-                                .map(l => l.trim())
-                                .filter(l => l !== '' && l !== String(uid) && isValidUid(l));
-        const newContent = lines.join('\n');
-        await exec(`echo ${newContent} > ${FILES.exclusions}`);
+        const cat = await exec(`cat ${FILES.exclusions} 2>/dev/null || echo ""`);
+        const remainingUids = parseUidList(cat.stdout).filter(line => line !== String(uid));
 
-        await exec(`${NM_BIN} unblock ${uid}`);
+        const unblockRes = await exec(`${NM_BIN} unblock ${uid}`);
+        if (unblockRes.errno !== 0) throw new Error(unblockRes.stderr || "Failed to unblock UID");
+
+        const writeRes = await exec(buildWriteUidListCommand(remainingUids));
+        if (writeRes.errno !== 0) throw new Error(writeRes.stderr || "Failed to update exclusion list");
+
         await loadExclusions();
     } catch (e) { showToast("Error unblocking"); }
 }
@@ -789,10 +855,14 @@ async function addExclusion(uid, name) {
     if (!isValidUid(uid)) return showToast("Invalid UID");
     try {
         const cat = await exec(`cat ${FILES.exclusions} 2>/dev/null || echo ""`);
-        if (cat.stdout.includes(String(uid))) return showToast("Already blocked");
+        if (parseUidList(cat.stdout).includes(String(uid))) return showToast("Already blocked");
 
-        await exec(`echo "${uid}" >> ${FILES.exclusions}`);
-        await exec(`${NM_BIN} block ${uid}`);
+        const writeRes = await exec(`printf '%s\\n' ${uid} >> ${FILES.exclusions}`);
+        if (writeRes.errno !== 0) throw new Error(writeRes.stderr || "Failed to update exclusion list");
+
+        const blockRes = await exec(`${NM_BIN} block ${uid}`);
+        if (blockRes.errno !== 0) throw new Error(blockRes.stderr || "Failed to block UID");
+
         showToast(`Blocked: ${name}`);
         await loadExclusions();
     } catch (e) { showToast("Error blocking"); }
@@ -931,6 +1001,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initOfflineIcons();
     syncSystemBarTheme();
     initNavigation();
+    initTopAppBar();
     initPullToRefresh();
     
     const fab = document.getElementById('fab-add-exclusion');

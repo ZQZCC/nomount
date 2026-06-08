@@ -60,6 +60,7 @@
     --nm-segment-gap: 2px;
     --nm-segment-inner-corner: 2px;
     --nm-segment-outer-corner: var(--md-sys-shape-corner-large);
+    --nm-page-bottom-gap: 24px;
     --nm-page-background: var(--md-sys-color-background);
     --nm-state-layer: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent);
     --nm-nav-background: color-mix(in srgb, var(--md-sys-color-surface-container) 94%, transparent);
@@ -137,10 +138,10 @@
     --md-fab-icon-color: var(--md-sys-color-primary);
     --md-fab-container-shape: var(--md-sys-shape-corner-large);
     --md-fab-icon-size: 24px;
-    --md-fab-container-elevation: 1;
-    --md-fab-hover-container-elevation: 2;
-    --md-fab-focus-container-elevation: 1;
-    --md-fab-pressed-container-elevation: 1;
+    --md-fab-container-elevation: 2;
+    --md-fab-hover-container-elevation: 3;
+    --md-fab-focus-container-elevation: 2;
+    --md-fab-pressed-container-elevation: 2;
     --md-fab-container-shadow-color: color-mix(in srgb, var(--md-sys-color-shadow) 48%, transparent);
     --md-filled-tonal-button-container-shape: var(--md-sys-shape-corner-full);
     --md-filled-tonal-button-container-height: 36px;

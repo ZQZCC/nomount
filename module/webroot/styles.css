@@ -51,6 +51,60 @@ md-icon svg {
     height: 100%;
     width: 100%;
 }
+
+.top-app-bar {
+    --top-app-bar-opacity: 0;
+    --top-app-title-opacity: 0;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 90;
+    display: flex;
+    align-items: flex-end;
+    min-height: calc(var(--insets-top) + 64px);
+    padding:
+        var(--insets-top)
+        var(--nm-page-padding-inline)
+        12px;
+    color: var(--md-sys-color-on-surface);
+    background: transparent;
+    opacity: 1;
+    pointer-events: none;
+    transform: none;
+}
+
+.top-app-bar::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    background: var(--nm-page-background);
+    opacity: var(--top-app-bar-opacity);
+}
+
+.top-app-bar.visible {
+    opacity: 1;
+}
+
+.top-app-bar-title {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 720px;
+    margin: 0 auto;
+    padding-left: 4px;
+    font-size: var(--md-sys-typescale-title-large-size);
+    line-height: var(--md-sys-typescale-title-large-line-height);
+    font-weight: var(--md-sys-typescale-title-large-weight);
+    opacity: var(--top-app-title-opacity);
+    visibility: hidden;
+}
+
+.top-app-bar.show-title .top-app-bar-title {
+    visibility: visible;
+}
+
 @keyframes spin {
     from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
@@ -85,7 +139,7 @@ md-icon svg {
     position: relative;
     width: 100%;
     padding-top: 0;
-    padding-bottom: calc(var(--nav-height) + var(--insets-bottom) + 24px);
+    padding-bottom: calc(var(--nav-height) + var(--insets-bottom) + var(--nm-page-bottom-gap));
     scroll-behavior: smooth;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
@@ -113,7 +167,7 @@ md-icon svg {
 
 #view-modules,
 #view-exclusions {
-    min-height: calc(100vh - var(--nav-height) - var(--insets-bottom));
+    min-height: calc(100vh - var(--nav-height) - var(--insets-bottom) - var(--nm-page-bottom-gap));
 }
 
 #modules-list,
@@ -781,6 +835,8 @@ md-fab {
 }
 
 .exclusion-app .setting-text {
+    display: flex;
+    flex-direction: column;
     flex: 1 1 auto;
     min-width: 0;
     overflow: hidden;
@@ -794,6 +850,9 @@ md-fab {
 }
 
 .exclusion-app .setting-text p {
+    margin: 0;
+    font-size: var(--md-sys-typescale-body-small-size);
+    line-height: var(--md-sys-typescale-body-small-line-height);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
