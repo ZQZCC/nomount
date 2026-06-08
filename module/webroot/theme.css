@@ -2,7 +2,6 @@
     color-scheme: light;
 
     --nm-font-family: "Roboto", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    --md-icon-font: "Material Symbols Rounded";
 
     --md-sys-color-background: var(--background, #fffbff);
     --md-sys-color-on-background: var(--onBackground, #1d1b20);
