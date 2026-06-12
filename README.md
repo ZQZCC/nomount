@@ -80,6 +80,7 @@ nm block 10256
 
 -  **[HymoFS](https://github.com/Anatdx/HymoFS)**: Inspiration for this project.
 -  **[A7mdwassa](https://github.com/A7mdwassa)**: Tester and contributor.
+-  **[ZQZCC](https://github.com/ZQZCC)**: WebUI MD3E-style design.
 -  **[backslashxx](https://github.com/backslashxx)**: Code optimization.
 -  **[KernelSU](https://github.com/tiann/KernelSU)**: Root solution.
 -  **All testers**: Thanks for making this project more stable!
